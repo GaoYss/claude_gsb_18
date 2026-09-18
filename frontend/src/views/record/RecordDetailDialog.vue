@@ -15,14 +15,34 @@
         </el-descriptions-item>
         <el-descriptions-item label="养护日期">{{ formatDate(detail.record_date) }}</el-descriptions-item>
         <el-descriptions-item label="天气">{{ detail.weather_label || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="任务类型">
+          {{ detail.task_type_label || '日常巡查（未分类）' }}
+        </el-descriptions-item>
+        <el-descriptions-item label="标准工时">{{ detail.standard_work_hours != null ? `${detail.standard_work_hours} 小时` : '-' }}</el-descriptions-item>
         <el-descriptions-item label="作业人员">{{ detail.worker || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="工时">{{ formatHours(detail.work_hours) }}</el-descriptions-item>
+        <el-descriptions-item label="实际工时">
+          <span>{{ formatHours(detail.work_hours) }}</span>
+          <el-tag v-if="detail.hours_deviated" size="small" type="danger" effect="plain" class="deviation-tag">
+            工时偏差 {{ formatSignedPercent(detail.hours_deviation_ratio) }}
+          </el-tag>
+        </el-descriptions-item>
         <el-descriptions-item label="质量评定">
           <EnumTag group="quality_result" :value="detail.quality_result" :label="detail.quality_result_label" />
         </el-descriptions-item>
         <el-descriptions-item label="登记时间">{{ formatDateTime(detail.created_at) }}</el-descriptions-item>
         <el-descriptions-item label="作业内容" :span="2">{{ detail.work_content || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="使用材料" :span="2">{{ detail.materials || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="使用材料" :span="2">
+            <span>{{ detail.materials || '-' }}</span>
+            <el-tag v-if="detail.materials_deviated" size="small" type="warning" effect="plain" class="deviation-tag">
+              材料非常用
+            </el-tag>
+            <div v-if="detail.common_materials?.length" class="standard-materials">
+              常用材料：{{ detail.common_materials.join('、') }}
+            </div>
+        </el-descriptions-item>
+        <el-descriptions-item v-if="detail.has_deviation" label="偏差原因" :span="2">
+          <span class="deviation-reason">{{ detail.deviation_reason || '-' }}</span>
+        </el-descriptions-item>
         <el-descriptions-item label="发现问题" :span="2">{{ detail.issue_found || '-' }}</el-descriptions-item>
         <el-descriptions-item label="备注" :span="2">{{ detail.remark || '-' }}</el-descriptions-item>
       </el-descriptions>
@@ -74,6 +94,12 @@ async function open(id) {
   }
 }
 
+function formatSignedPercent(ratio) {
+  if (ratio === null || ratio === undefined) return ''
+  const percent = Math.round(ratio * 100)
+  return `${percent > 0 ? '+' : ''}${percent}%`
+}
+
 function close() {
   visible.value = false
 }
@@ -91,5 +117,19 @@ defineExpose({ open })
 
 .panel-title {
   font-weight: 600;
+}
+
+.deviation-tag {
+  margin-left: 8px;
+}
+
+.standard-materials {
+  margin-top: 4px;
+  color: #909399;
+  font-size: 12px;
+}
+
+.deviation-reason {
+  color: #e6a23c;
 }
 </style>

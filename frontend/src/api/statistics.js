@@ -7,4 +7,5 @@ export const statisticsApi = {
   trends: (params) => http.get('/statistics/trends', { params }),
   ranking: (params) => http.get('/statistics/ranking', { params }),
   reminders: () => http.get('/statistics/reminders'),
+  deviations: (params) => http.get('/statistics/deviations', { params }),
 }

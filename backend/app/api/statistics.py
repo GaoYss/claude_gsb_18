@@ -55,3 +55,14 @@ def reminders():
         "overdue": StatisticsService.overdue_tasks(),
         "upcoming": StatisticsService.upcoming_tasks(),
     })
+
+
+@bp.get("/statistics/deviations")
+def deviations():
+    """工时/材料与标准偏差较大的养护记录汇总。"""
+
+    try:
+        limit = int(request.args.get("limit", 10))
+    except (TypeError, ValueError):
+        limit = 10
+    return ok(StatisticsService.deviated_records(min(max(limit, 1), 50)))

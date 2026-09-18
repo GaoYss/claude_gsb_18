@@ -157,7 +157,8 @@ def test_update_record_quality_resyncs_task(api, make_task):
 def test_list_filters_and_summary(api, make_task, make_record):
     task = make_task()
     make_record(task=task, work_hours=6, quality_result="qualified")
-    make_record(task=task, work_hours=4, quality_result="unqualified", record_date=date(2026, 3, 20))
+    make_record(task=task, work_hours=4, quality_result="unqualified", record_date=date(2026, 3, 20),
+                deviation_reason="修剪范围临时扩大，作业效率低于标准")
     make_record(space=task.green_space, work_hours=2, quality_result="qualified",
                 record_date=date(2026, 4, 1), work_content="日常巡查，清理园路落叶")
 
@@ -166,6 +167,14 @@ def test_list_filters_and_summary(api, make_task, make_record):
     assert data["summary"]["record_count"] == 2
     assert data["summary"]["total_work_hours"] == 10.0
     assert data["summary"]["quality_summary"] == {"qualified": 1, "pending": 0, "unqualified": 1}
+    assert data["summary"]["deviation_summary"] == {
+        "deviated_count": 1, "hours_deviated_count": 1, "materials_deviated_count": 0,
+    }
+
+    deviated = api.data(api.get("/api/v1/maintenance-records", deviated="true"))
+    assert deviated["meta"]["total"] == 1
+    assert deviated["items"][0]["work_hours"] == 4.0
+    assert deviated["items"][0]["hours_deviated"] is True
 
     ranged = api.data(api.get("/api/v1/maintenance-records", date_from="2026-04-01",
                               date_to="2026-04-30"))

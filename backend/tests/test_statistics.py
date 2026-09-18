@@ -79,8 +79,15 @@ def test_dashboard_returns_all_sections(api, seeded):
     data = api.data(api.get("/api/v1/statistics/dashboard"))
     assert set(data) == {
         "overview", "distributions", "trends", "ranking",
-        "overdue_tasks", "upcoming_tasks", "recent_activity",
+        "overdue_tasks", "upcoming_tasks", "recent_activity", "deviations",
     }
     assert len(data["trends"]) == 6
     assert data["recent_activity"]["records"]
     assert data["recent_activity"]["replacements"]
+    assert set(data["deviations"]) == {
+        "deviated_count", "hours_deviated_count", "materials_deviated_count",
+        "by_task_type", "items",
+    }
+    for item in data["deviations"]["items"]:
+        assert item["has_deviation"] is True
+        assert item["deviation_reason"]

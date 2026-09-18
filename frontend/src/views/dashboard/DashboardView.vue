@@ -37,6 +37,14 @@
         icon="Notebook"
       />
       <StatCard
+        label="工时/材料偏差记录"
+        :value="formatNumber(overview.record.deviated_count)"
+        unit="条"
+        :hint="`本月新增 ${formatNumber(overview.record.month_deviated_count)} 条，需复核偏差原因`"
+        :tone="overview.record.deviated_count ? 'danger' : 'default'"
+        icon="Warning"
+      />
+      <StatCard
         label="本月绿植更换"
         :value="formatNumber(overview.replacement.month_quantity)"
         unit="株/㎡"
@@ -100,6 +108,70 @@
           </el-table-column>
           <el-table-column label="更换量" width="100">
             <template #default="{ row }">{{ formatNumber(row.replacement_quantity) }}</template>
+          </el-table-column>
+        </el-table>
+      </div>
+    </div>
+
+    <div class="dashboard-columns">
+      <div class="panel">
+        <div class="table-toolbar">
+          <span class="panel-title">工时/材料偏差较大的养护记录</span>
+          <el-link type="primary" :underline="false" @click="router.push({ path: '/records', query: { deviated: '1' } })">
+            查看全部偏差记录
+          </el-link>
+        </div>
+        <div class="deviation-summary-bar">
+          <el-tag type="danger" effect="plain">共 {{ deviations.deviated_count }} 条</el-tag>
+          <el-tag type="danger" effect="plain">工时偏差 {{ deviations.hours_deviated_count }} 条</el-tag>
+          <el-tag type="warning" effect="plain">材料偏差 {{ deviations.materials_deviated_count }} 条</el-tag>
+        </div>
+        <el-table :data="deviations.items" size="small" empty-text="暂无偏差较大的记录">
+          <el-table-column prop="record_no" label="记录编号" width="150" />
+          <el-table-column label="绿地" min-width="130" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.green_space?.name || '-' }}</template>
+          </el-table-column>
+          <el-table-column label="任务类型" width="100">
+            <template #default="{ row }">{{ row.task_type_label || '日常巡查' }}</template>
+          </el-table-column>
+          <el-table-column prop="record_date" label="养护日期" width="100" />
+          <el-table-column label="实际/标准工时" width="120">
+            <template #default="{ row }">
+              <span :class="{ 'text-danger': row.hours_deviated }">{{ formatNumber(row.work_hours) }}</span>
+              <span class="text-secondary"> / {{ formatNumber(row.standard_work_hours) }}h</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="偏差" width="130">
+            <template #default="{ row }">
+              <el-tag v-if="row.hours_deviated" size="small" type="danger" effect="plain">
+                工时 {{ signedPercent(row.hours_deviation_ratio) }}
+              </el-tag>
+              <el-tag v-if="row.materials_deviated" size="small" type="warning" effect="plain">
+                材料
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="deviation_reason" label="偏差原因" min-width="180" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.deviation_reason || '-' }}</template>
+          </el-table-column>
+        </el-table>
+      </div>
+
+      <div class="panel">
+        <div class="table-toolbar">
+          <span class="panel-title">偏差记录按任务类型汇总</span>
+          <span class="summary-text">标准工时对照</span>
+        </div>
+        <el-table :data="deviations.by_task_type" size="small" empty-text="暂无偏差记录">
+          <el-table-column type="index" label="#" width="48" />
+          <el-table-column prop="label" label="任务类型" min-width="120" />
+          <el-table-column label="标准工时" width="100">
+            <template #default="{ row }">{{ formatNumber(row.standard_work_hours) }}h</template>
+          </el-table-column>
+          <el-table-column prop="count" label="偏差条数" width="90">
+            <template #default="{ row }">
+              <span class="text-danger">{{ row.count }}</span>
+            </template>
           </el-table-column>
         </el-table>
       </div>
@@ -175,7 +247,8 @@ function emptyDashboard() {
     overview: {
       green_space: { total: 0, total_area: 0, by_status: {} },
       task: { total: 0, open_count: 0, overdue_count: 0, due_soon_count: 0, completion_rate: 0, by_status: {} },
-      record: { total: 0, month_count: 0, month_work_hours: 0, total_work_hours: 0 },
+      record: { total: 0, month_count: 0, month_work_hours: 0, total_work_hours: 0,
+                deviated_count: 0, month_deviated_count: 0 },
       replacement: { total: 0, month_count: 0, month_quantity: 0, month_amount: 0, year_amount: 0, total_amount: 0 },
     },
     distributions: {
@@ -189,10 +262,27 @@ function emptyDashboard() {
     overdue_tasks: [],
     upcoming_tasks: [],
     recent_activity: { records: [], replacements: [] },
+    deviations: {
+      deviated_count: 0,
+      hours_deviated_count: 0,
+      materials_deviated_count: 0,
+      by_task_type: [],
+      items: [],
+    },
   }
 }
 
 const overview = computed(() => dashboard.value.overview)
+const deviations = computed(() => dashboard.value.deviations || {
+  deviated_count: 0, hours_deviated_count: 0, materials_deviated_count: 0,
+  by_task_type: [], items: [],
+})
+
+function signedPercent(ratio) {
+  if (ratio === null || ratio === undefined) return ''
+  const percent = Math.round(ratio * 100)
+  return `${percent > 0 ? '+' : ''}${percent}%`
+}
 
 const trendChart = computed(() => trendOption(dashboard.value.trends || []))
 
@@ -258,5 +348,21 @@ onMounted(load)
 .overdue-days {
   color: #f56c6c;
   font-weight: 600;
+}
+
+.deviation-summary-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.text-danger {
+  color: #f56c6c;
+  font-weight: 600;
+}
+
+.text-secondary {
+  color: #909399;
 }
 </style>

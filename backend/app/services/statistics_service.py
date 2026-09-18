@@ -2,9 +2,9 @@
 
 from datetime import timedelta
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 
-from ..constants import ENUM_GROUPS
+from ..constants import ENUM_GROUPS, TASK_TYPE_STANDARDS
 from ..extensions import db
 from ..models import GreenSpace, MaintenanceRecord, MaintenanceTask, PlantReplacement
 from ..models.maintenance_task import OPEN_STATUSES
@@ -79,6 +79,29 @@ class StatisticsService:
             func.count(MaintenanceRecord.id),
             func.coalesce(func.sum(MaintenanceRecord.work_hours), 0),
         ).filter(MaintenanceRecord.record_date >= month_start).one()
+        deviated_total = (
+            db.session.query(func.count(MaintenanceRecord.id))
+            .filter(
+                or_(
+                    MaintenanceRecord.hours_deviation_flag.is_(True),
+                    MaintenanceRecord.materials_deviation_flag.is_(True),
+                )
+            )
+            .scalar()
+            or 0
+        )
+        month_deviated = (
+            db.session.query(func.count(MaintenanceRecord.id))
+            .filter(
+                MaintenanceRecord.record_date >= month_start,
+                or_(
+                    MaintenanceRecord.hours_deviation_flag.is_(True),
+                    MaintenanceRecord.materials_deviation_flag.is_(True),
+                ),
+            )
+            .scalar()
+            or 0
+        )
 
         replacement_total, quantity_total, amount_total = db.session.query(
             func.count(PlantReplacement.id),
@@ -117,6 +140,8 @@ class StatisticsService:
                 "total_work_hours": to_float(hours_total) or 0,
                 "month_count": month_records or 0,
                 "month_work_hours": to_float(month_hours) or 0,
+                "deviated_count": deviated_total,
+                "month_deviated_count": month_deviated,
             },
             "replacement": {
                 "total": replacement_total or 0,
@@ -385,6 +410,65 @@ class StatisticsService:
             "replacements": [item.to_dict() for item in replacements],
         }
 
+    # ------------------------------------------------------------ 偏差汇总
+    @staticmethod
+    def deviated_records(limit=10):
+        """工时或材料与标准偏差较大的养护记录汇总。"""
+
+        deviation_filter = or_(
+            MaintenanceRecord.hours_deviation_flag.is_(True),
+            MaintenanceRecord.materials_deviation_flag.is_(True),
+        )
+        deviated_count = (
+            db.session.query(func.count(MaintenanceRecord.id)).filter(deviation_filter).scalar() or 0
+        )
+        hours_count = (
+            db.session.query(func.count(MaintenanceRecord.id))
+            .filter(MaintenanceRecord.hours_deviation_flag.is_(True))
+            .scalar()
+            or 0
+        )
+        materials_count = (
+            db.session.query(func.count(MaintenanceRecord.id))
+            .filter(MaintenanceRecord.materials_deviation_flag.is_(True))
+            .scalar()
+            or 0
+        )
+
+        type_rows = (
+            db.session.query(MaintenanceRecord.task_type, func.count(MaintenanceRecord.id))
+            .filter(deviation_filter)
+            .group_by(MaintenanceRecord.task_type)
+            .all()
+        )
+        by_task_type = [
+            {
+                "value": task_type,
+                "label": ENUM_GROUPS["task_type"].label(task_type),
+                "count": count,
+                "standard_work_hours": to_float(
+                    TASK_TYPE_STANDARDS.get(task_type, {}).get("standard_work_hours")
+                ),
+            }
+            for task_type, count in type_rows
+            if task_type
+        ]
+
+        records = (
+            db.session.query(MaintenanceRecord)
+            .filter(deviation_filter)
+            .order_by(MaintenanceRecord.record_date.desc(), MaintenanceRecord.id.desc())
+            .limit(limit)
+            .all()
+        )
+        return {
+            "deviated_count": deviated_count,
+            "hours_deviated_count": hours_count,
+            "materials_deviated_count": materials_count,
+            "by_task_type": sorted(by_task_type, key=lambda item: item["count"], reverse=True),
+            "items": [item.to_dict(detail=True) for item in records],
+        }
+
     # ------------------------------------------------------------ 汇总入口
     @staticmethod
     def dashboard(months=6):
@@ -398,4 +482,5 @@ class StatisticsService:
             "overdue_tasks": StatisticsService.overdue_tasks(),
             "upcoming_tasks": StatisticsService.upcoming_tasks(),
             "recent_activity": StatisticsService.recent_activity(),
+            "deviations": StatisticsService.deviated_records(),
         }

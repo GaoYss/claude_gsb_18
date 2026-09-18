@@ -11,10 +11,10 @@
 
 | 模块 | 页面 | 主要能力 |
 | --- | --- | --- |
-| 养护总览 | `/dashboard` | 绿地与养护总量指标、近半年记录与工时趋势、绿地类型/任务类型/更换原因分布、逾期任务提醒、养护工作量排名 |
+| 养护总览 | `/dashboard` | 绿地与养护总量指标（含工时/材料偏差记录数）、近半年记录与工时趋势、绿地类型/任务类型/更换原因分布、逾期任务提醒、养护工作量排名、偏差较大记录单独汇总（明细 + 按任务类型） |
 | 绿地台账 | `/green-spaces` | 绿地建档（编号自动生成）、按行政区/类型/等级/状态/关键字检索、档案详情（概览 + 近期任务/记录/更换 + 更换原因汇总）、删除保护 |
 | 养护任务 | `/tasks` | 任务登记（编号按日生成）、按状态/类型/优先级/绿地/计划日期区间/逾期筛选、状态流转（待执行→进行中→已完成/已取消）、任务详情与执行进度 |
-| 养护记录 | `/records` | 记录录入（可关联任务，也可登记日常巡查）、工时/天气/材料/质量评定、质量分布与工时汇总、记录详情 |
+| 养护记录 | `/records` | 记录录入（可关联任务，也可登记日常巡查）、按任务类型带出标准工时与常用材料、工时/材料偏差提示与原因留痕、工时/天气/材料/质量评定、质量分布与工时汇总、记录详情 |
 | 绿植更换 | `/replacements` | 更换登记（植株、类别、规格、数量、原因、原植株状况、供苗单位、单价与金额）、按类别/原因统计与占比、按绿地/日期区间筛选 |
 
 ## 二、目录结构
@@ -141,6 +141,7 @@ cd frontend && npm run build && npm run preview
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | GET | `/meta/enums` | 全部业务字典（前端下拉唯一来源） |
+| GET | `/meta/task-standards` | 各任务类型的标准工时与常用材料（录入时带出） |
 | GET | `/meta/health` | 健康检查（含数据库连通性） |
 | GET | `/green-spaces` | 台账列表（`keyword`/`district`/`green_type`/`maintenance_grade`/`status`/`sort`/`order`/分页，返回汇总） |
 | GET | `/green-spaces/options` | 绿地下拉选项（排除已归档） |
@@ -153,14 +154,14 @@ cd frontend && npm run build && npm run preview
 | GET/POST | `/maintenance-tasks` | 任务列表 / 登记任务（`status`/`task_type`/`priority`/`green_space_id`/`date_from`/`date_to`/`overdue`） |
 | GET/PUT/DELETE | `/maintenance-tasks/{id}` | 任务详情（含执行进度与记录） / 更新 / 删除（有记录时需 `force`，记录会保留但解除关联） |
 | PATCH | `/maintenance-tasks/{id}/status` | 任务状态流转 |
-| GET/POST | `/maintenance-records` | 记录列表（`task_id`/`green_space_id`/`quality_result`/`weather`/`unlinked`/日期区间，返回汇总） / 录入记录 |
-| GET/PUT/DELETE | `/maintenance-records/{id}` | 记录详情（含关联更换记录） / 更新 / 删除 |
-| GET | `/maintenance-records/summary` | 记录汇总（条数、工时、质量分布） |
+| GET/POST | `/maintenance-records` | 记录列表（`task_id`/`green_space_id`/`quality_result`/`weather`/`unlinked`/`deviated`/日期区间，返回汇总） / 录入记录（自动带出标准，偏差需填原因） |
+| GET/PUT/DELETE | `/maintenance-records/{id}` | 记录详情（含标准值、偏差标记、关联更换记录） / 更新 / 删除 |
+| GET | `/maintenance-records/summary` | 记录汇总（条数、工时、质量分布、偏差汇总） |
 | GET/POST | `/plant-replacements` | 更换记录列表（`green_space_id`/`plant_category`/`reason`/日期区间，返回汇总） / 登记更换 |
 | GET/PUT/DELETE | `/plant-replacements/{id}` | 详情 / 更新 / 删除 |
 | GET | `/plant-replacements/summary` | 更换汇总（按植物类别、更换原因） |
-| GET | `/statistics/dashboard` | 看板聚合数据（总览 + 分布 + 趋势 + 榜单 + 提醒 + 最近动态） |
-| GET | `/statistics/overview` `/distributions` `/trends` `/ranking` `/reminders` | 看板分项接口 |
+| GET | `/statistics/dashboard` | 看板聚合数据（总览 + 分布 + 趋势 + 榜单 + 提醒 + 最近动态 + 偏差汇总） |
+| GET | `/statistics/overview` `/distributions` `/trends` `/ranking` `/reminders` `/deviations` | 看板分项接口（`/deviations` 为偏差较大记录汇总） |
 
 ## 六、业务规则
 
@@ -175,6 +176,7 @@ cd frontend && npm run build && npm run preview
 5. **金额核算**：更换金额 = 数量 × 单价，由后端统一计算；未填单价时金额留空，前端提示补录。
 6. **删除保护**：删除绿地时若已存在任务/记录/更换数据会返回 409 并给出数量明细，需 `force=true` 才级联删除；删除任务时养护记录默认保留（解除关联），避免养护履历丢失。
 7. **字典单一来源**：所有枚举在 `backend/app/constants.py` 定义，前端通过 `/meta/enums` 获取并缓存，前后端不重复维护。
+8. **标准值与偏差管控**：各任务类型的标准工时与常用材料在 `TASK_TYPE_STANDARDS` 维护，通过 `/meta/task-standards` 下发；录入时关联任务自动带出任务类型，日常巡查手工选择。系统快照当时标准值（`standard_work_hours`/`common_materials`），实际工时相对标准偏差比例 ≥30% 且绝对差 ≥1h，或实际材料与常用材料完全无交集（填「无」除外）时判定为偏差较大，必须填写 `deviation_reason` 才能保存；实际值回到标准范围内会自动清除原因。偏差记录落库为工时/材料两个标记列，支持 `deviated=true` 筛选并在看板单独汇总。
 
 ## 七、数据模型
 
@@ -182,7 +184,7 @@ cd frontend && npm run build && npm run preview
 | --- | --- | --- |
 | `green_space` | 绿地台账 | `code`(唯一)、`name`、`district`、`green_type`、`maintenance_grade`、`area_sqm`、`status`、`manager`、`established_date` |
 | `maintenance_task` | 养护任务 | `task_no`(唯一)、`green_space_id`、`task_type`、`plan_date`、`priority`、`executor`、`status`、`completed_at` |
-| `maintenance_record` | 养护记录 | `record_no`(唯一)、`task_id`(可空)、`green_space_id`、`record_date`、`work_content`、`worker`、`work_hours`、`weather`、`quality_result` |
+| `maintenance_record` | 养护记录 | `record_no`(唯一)、`task_id`(可空)、`green_space_id`、`task_type`(可空)、`record_date`、`work_content`、`worker`、`work_hours`、`standard_work_hours`、`common_materials`、`materials`、`hours_deviation_flag`、`materials_deviation_flag`、`deviation_reason`、`weather`、`quality_result` |
 | `plant_replacement` | 绿植更换记录 | `replacement_no`(唯一)、`green_space_id`、`maintenance_record_id`(可空)、`plant_name`、`plant_category`、`quantity`、`unit`、`reason`、`unit_price`、`amount` |
 
 绿地删除时任务/记录/更换级联清理；任务与养护记录之间、养护记录与更换记录之间为可空外键（`SET NULL`），保证养护履历可独立留存。
@@ -191,10 +193,10 @@ cd frontend && npm run build && npm run preview
 
 ```bash
 cd backend
-python -m pytest              # 52 个用例：接口、校验、跨模块规则、端到端流程
+python -m pytest              # 65 个用例：接口、校验、跨模块规则、标准偏差管控、端到端流程
 ```
 
-覆盖重点：绿地编号生成与唯一性、枚举与字段校验、列表过滤/排序/分页、任务状态自动流转与手动流转限制、记录删除后的状态回退、更换金额核算、删除保护与强制删除、统计聚合口径一致性、演示数据自洽性。
+覆盖重点：绿地编号生成与唯一性、枚举与字段校验、列表过滤/排序/分页、任务状态自动流转与手动流转限制、记录删除后的状态回退、更换金额核算、删除保护与强制删除、统计聚合口径一致性、任务类型标准值带出与工时/材料偏差强制原因、偏差筛选与看板汇总、演示数据自洽性。
 
 ## 九、常见问题
 

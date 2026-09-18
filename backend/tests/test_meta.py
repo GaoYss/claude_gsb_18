@@ -28,6 +28,18 @@ def test_enums_cover_all_business_groups(api):
     assert {"value": "park", "label": "公园绿地"} in enums["green_space_type"]
 
 
+def test_task_standards_cover_all_task_types(api):
+    data = api.data(api.get("/api/v1/meta/task-standards"))
+    standards = data["standards"]
+    enums = api.data(api.get("/api/v1/meta/enums"))["enums"]
+    task_types = {item["value"] for item in enums["task_type"]}
+    assert set(standards) == task_types
+    prune = standards["prune"]
+    assert prune["task_type_label"] == "修剪整形"
+    assert prune["standard_work_hours"] > 0
+    assert isinstance(prune["common_materials"], list) and prune["common_materials"]
+
+
 def test_unknown_api_returns_unified_404(api):
     response = api.get("/api/v1/not-exists")
     assert response.status_code == 404

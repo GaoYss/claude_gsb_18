@@ -12,6 +12,7 @@ from flask.cli import with_appcontext
 
 from .extensions import db
 from .models import GreenSpace
+from .constants import TASK_TYPE_STANDARDS
 from .services import (
     GreenSpaceService,
     MaintenanceRecordService,
@@ -164,6 +165,50 @@ WEATHERS = ["sunny", "cloudy", "overcast", "rain", "windy"]
 WORKERS = ["王海涛", "李建民", "张凤英", "吴国强", "何丽萍", "赵春生", "孙明华", "许娟"]
 SUPPLIERS = ["萧山苗木合作社", "临安绿源苗圃", "余杭花卉基地", "杭州城西园艺公司"]
 
+# 偏差演示记录使用的非常用材料/药剂与偏差原因
+OFF_STANDARD_MATERIALS = ["生根粉 5 包", "地膜 200 平方米", "营养液 40L", "遮阳网 300 平方米"]
+DEVIATION_REASONS = [
+    "现场病虫害比预期严重，扩大作业面积并复喷一次，工时高于标准",
+    "连续降雨导致作业中断，雨后补做增加了工时与材料",
+    "苗木规格偏大、作业面受限，修剪与清运耗时高于标准",
+    "高温干旱天气，新栽苗木需额外补浇一遍透水",
+    "现场发现大面积杂草与堆积垃圾，临时增加了清理范围",
+]
+
+
+def build_record_payload(rng, task_id, task_type, record_date, quality, *, force_deviation=False):
+    """按任务类型的标准工时/常用材料构造记录，少量记录刻意偏离标准。"""
+
+    standard = TASK_TYPE_STANDARDS[task_type]
+    std_hours = standard["standard_work_hours"]
+    common = standard["common_materials"]
+    deviate = force_deviation or rng.random() < 0.15
+
+    payload = {
+        "task_id": task_id,
+        "record_date": record_date,
+        "work_content": rng.choice(RECORD_CONTENTS[task_type]),
+        "worker": rng.choice(WORKERS),
+        "weather": rng.choice(WEATHERS),
+        "quality_result": quality,
+    }
+    if quality == "unqualified":
+        payload["issue_found"] = "局部色块缺株，已列入下月补植计划"
+
+    if deviate:
+        delta = rng.choice([-2.5, -2, 2, 2.5, 3])
+        payload["work_hours"] = max(1.0, round(std_hours + delta, 1))
+        if common and rng.random() < 0.5:
+            payload["materials"] = rng.choice(common)
+        else:
+            payload["materials"] = rng.choice(OFF_STANDARD_MATERIALS)
+        payload["deviation_reason"] = rng.choice(DEVIATION_REASONS)
+    else:
+        # 在标准工时 ±0.5h 内浮动，材料取常用清单，保证不触发偏差
+        payload["work_hours"] = round(std_hours + rng.choice([-0.5, 0, 0.5]), 1)
+        payload["materials"] = rng.choice(common) if common and rng.random() < 0.8 else "无"
+    return payload
+
 
 def register_cli(app):
     app.cli.add_command(init_db_command)
@@ -256,17 +301,13 @@ def generate_demo_data(rng):
 
             record_date = plan_date + timedelta(days=rng.randint(0, 3))
             quality = "qualified" if rng.random() < 0.82 else rng.choice(["pending", "unqualified"])
-            record = MaintenanceRecordService.create({
-                "task_id": task.id,
-                "record_date": record_date,
-                "work_content": rng.choice(RECORD_CONTENTS[task_type]),
-                "worker": rng.choice(WORKERS),
-                "work_hours": rng.choice([3, 4, 5, 6, 8, 10]),
-                "weather": rng.choice(WEATHERS),
-                "materials": rng.choice(["复合肥 180kg", "低毒药剂 12L", "支撑杆 60 根", "无", "防寒布 400㎡"]),
-                "quality_result": quality,
-                "issue_found": "局部色块缺株，已列入下月补植计划" if quality == "unqualified" else None,
-            })
+            # 每若干条任务记录确定性地制造一条偏差记录，保证看板汇总有演示数据
+            task_record_seq = counts["maintenance_record"]
+            record_payload = build_record_payload(
+                rng, task.id, task_type, record_date, quality,
+                force_deviation=task_record_seq > 0 and task_record_seq % 7 == 0,
+            )
+            record = MaintenanceRecordService.create(record_payload)
             counts["maintenance_record"] += 1
 
             replace_chance = 0.85 if task_type in {"replant", "pest", "prune"} else 0.35

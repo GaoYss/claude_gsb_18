@@ -22,6 +22,7 @@
         <el-date-picker v-model="dateRange" type="daterange" unlink-panels value-format="YYYY-MM-DD"
                         start-placeholder="养护日期起" end-placeholder="养护日期止" @change="onDateChange" />
         <el-checkbox v-model="filters.unlinked" label="仅看未关联任务" border @change="search" />
+        <el-checkbox v-model="filters.deviated" label="仅看偏差记录" border @change="search" />
         <el-button type="primary" :icon="'Search'" @click="search">查询</el-button>
         <el-button :icon="'RefreshLeft'" @click="reset">重置</el-button>
       </div>
@@ -35,6 +36,12 @@
           合格 <strong>{{ summary?.quality_summary?.qualified ?? 0 }}</strong>、
           待复检 <strong>{{ summary?.quality_summary?.pending ?? 0 }}</strong>、
           不合格 <strong>{{ summary?.quality_summary?.unqualified ?? 0 }}</strong>
+          <template v-if="summary?.deviation_summary">
+            ，偏差较大
+            <el-tag size="small" type="danger" effect="plain" class="deviation-count">
+              {{ summary.deviation_summary.deviated_count }} 条
+            </el-tag>
+          </template>
         </span>
         <el-button :icon="'Refresh'" text @click="load">刷新</el-button>
       </div>
@@ -60,8 +67,22 @@
         <el-table-column prop="worker" label="作业人员" width="90">
           <template #default="{ row }">{{ row.worker || '-' }}</template>
         </el-table-column>
-        <el-table-column label="工时" width="80" align="right">
-          <template #default="{ row }">{{ formatNumber(row.work_hours) }}</template>
+        <el-table-column label="工时(实际/标准)" width="125" align="right">
+          <template #default="{ row }">
+            <span :class="{ 'text-danger': row.hours_deviated }">{{ formatNumber(row.work_hours) }}</span>
+            <span class="text-secondary"> / {{ row.standard_work_hours != null ? formatNumber(row.standard_work_hours) : '-' }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="偏差" width="115">
+          <template #default="{ row }">
+            <el-tag v-if="row.hours_deviated" size="small" type="danger" effect="plain" class="deviation-cell-tag">
+              工时 {{ signedPercent(row.hours_deviation_ratio) }}
+            </el-tag>
+            <el-tag v-if="row.materials_deviated" size="small" type="warning" effect="plain" class="deviation-cell-tag">
+              材料
+            </el-tag>
+            <span v-if="!row.has_deviation" class="text-secondary">-</span>
+          </template>
         </el-table-column>
         <el-table-column label="质量评定" width="95">
           <template #default="{ row }">
@@ -130,8 +151,15 @@ const { filters, meta, items, summary, loading, load, search, resetFilters, hand
       date_from: '',
       date_to: '',
       unlinked: false,
+      deviated: route.query.deviated === '1' || route.query.deviated === 'true',
     },
   })
+
+function signedPercent(ratio) {
+  if (ratio === null || ratio === undefined) return ''
+  const percent = Math.round(ratio * 100)
+  return `${percent > 0 ? '+' : ''}${percent}%`
+}
 
 function onGreenSpaceChange() {
   filters.task_id = null
@@ -176,5 +204,22 @@ async function remove(row) {
 .cell-sub {
   color: #909399;
   font-size: 12px;
+}
+
+.text-danger {
+  color: #f56c6c;
+  font-weight: 600;
+}
+
+.text-secondary {
+  color: #909399;
+}
+
+.deviation-cell-tag {
+  margin-right: 4px;
+}
+
+.deviation-count {
+  margin-left: 4px;
 }
 </style>

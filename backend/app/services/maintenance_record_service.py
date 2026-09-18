@@ -4,7 +4,12 @@ from datetime import datetime, time
 
 from sqlalchemy import func, or_
 
-from ..constants import QUALITY_RESULT
+from ..constants import (
+    QUALITY_RESULT,
+    TASK_TYPE_STANDARDS,
+    is_significant_hours_deviation,
+    is_significant_materials_deviation,
+)
 from ..errors import ConflictError, ValidationError
 from ..extensions import db
 from ..models import GreenSpace, MaintenanceRecord, MaintenanceTask, PlantReplacement
@@ -48,6 +53,7 @@ class MaintenanceRecordService(BaseService):
         task_id = payload.get("task_id", instance.task_id)
         green_space_id = payload.get("green_space_id", instance.green_space_id)
 
+        task = None
         if task_id:
             task = db.session.get(MaintenanceTask, task_id)
             if task is None:
@@ -59,6 +65,11 @@ class MaintenanceRecordService(BaseService):
                     "录入失败", details={"green_space_id": "所属绿地与关联任务的绿地不一致"}
                 )
             green_space_id = task.green_space_id
+            # 关联任务时任务类型始终跟随任务，忽略前端传入值
+            payload["task_type"] = task.task_type
+            instance.task_type = task.task_type
+        elif "task_type" in payload:
+            instance.task_type = payload["task_type"] or None
 
         if not green_space_id:
             raise ValidationError(
@@ -80,6 +91,48 @@ class MaintenanceRecordService(BaseService):
     def prepare_update(cls, instance, payload):
         setattr(instance, "_previous_task_id", instance.task_id)
         cls.prepare_instance(instance, payload)
+
+    @classmethod
+    def apply_derived(cls, instance):
+        """按任务类型快照标准值，判定工时/材料偏差并强制填写原因。"""
+
+        standard = TASK_TYPE_STANDARDS.get(instance.task_type)
+        if standard is None:
+            instance.standard_work_hours = None
+            instance.common_materials = None
+            instance.hours_deviation_flag = False
+            instance.materials_deviation_flag = False
+            instance.deviation_reason = None
+            return
+
+        instance.standard_work_hours = standard["standard_work_hours"]
+        instance.common_materials = MaintenanceRecord.materials_to_text(standard["common_materials"])
+        instance.hours_deviation_flag = is_significant_hours_deviation(
+            instance.work_hours, standard["standard_work_hours"]
+        )
+        instance.materials_deviation_flag = is_significant_materials_deviation(
+            instance.materials, standard["common_materials"]
+        )
+
+        reason = (instance.deviation_reason or "").strip()
+        if instance.hours_deviation_flag or instance.materials_deviation_flag:
+            if not reason:
+                dimensions = []
+                if instance.hours_deviation_flag:
+                    dimensions.append(
+                        f"工时 {to_float(instance.work_hours)}h 与标准 "
+                        f"{standard['standard_work_hours']}h 偏差较大"
+                    )
+                if instance.materials_deviation_flag:
+                    dimensions.append("使用材料不在该任务类型的常用材料范围内")
+                raise ValidationError(
+                    "录入失败",
+                    details={"deviation_reason": "；".join(dimensions) + "，请填写偏差原因"},
+                )
+            instance.deviation_reason = reason
+        else:
+            # 实际值回到标准范围内时清理历史原因，避免残留误导
+            instance.deviation_reason = None
 
     # ------------------------------------------------------------ 任务状态联动
     @classmethod
@@ -149,6 +202,13 @@ class MaintenanceRecordService(BaseService):
             query = query.filter(MaintenanceRecord.weather == filters["weather"])
         if filters.get("unlinked"):
             query = query.filter(MaintenanceRecord.task_id.is_(None))
+        if filters.get("deviated"):
+            query = query.filter(
+                or_(
+                    MaintenanceRecord.hours_deviation_flag.is_(True),
+                    MaintenanceRecord.materials_deviation_flag.is_(True),
+                )
+            )
         if filters.get("date_from"):
             query = query.filter(MaintenanceRecord.record_date >= filters["date_from"])
         if filters.get("date_to"):
@@ -187,6 +247,8 @@ class MaintenanceRecordService(BaseService):
             MaintenanceRecord.record_date,
             MaintenanceRecord.work_hours,
             MaintenanceRecord.quality_result,
+            MaintenanceRecord.hours_deviation_flag,
+            MaintenanceRecord.materials_deviation_flag,
         ).subquery()
 
         total, hours = db.session.query(
@@ -204,6 +266,27 @@ class MaintenanceRecordService(BaseService):
             func.min(subquery.c.record_date), func.max(subquery.c.record_date)
         ).one()
 
+        deviated_total = (
+            db.session.query(func.count(subquery.c.id))
+            .filter(
+                or_(
+                    subquery.c.hours_deviation_flag.is_(True),
+                    subquery.c.materials_deviation_flag.is_(True),
+                )
+            )
+            .scalar()
+        )
+        hours_deviated = (
+            db.session.query(func.count(subquery.c.id))
+            .filter(subquery.c.hours_deviation_flag.is_(True))
+            .scalar()
+        )
+        materials_deviated = (
+            db.session.query(func.count(subquery.c.id))
+            .filter(subquery.c.materials_deviation_flag.is_(True))
+            .scalar()
+        )
+
         replacement_total = (
             db.session.query(func.count(PlantReplacement.id))
             .filter(PlantReplacement.maintenance_record_id.in_(db.session.query(subquery.c.id)))
@@ -217,4 +300,9 @@ class MaintenanceRecordService(BaseService):
             "first_record_date": format_date(first_date),
             "last_record_date": format_date(last_date),
             "replacement_count": replacement_total,
+            "deviation_summary": {
+                "deviated_count": deviated_total or 0,
+                "hours_deviated_count": hours_deviated or 0,
+                "materials_deviated_count": materials_deviated or 0,
+            },
         }

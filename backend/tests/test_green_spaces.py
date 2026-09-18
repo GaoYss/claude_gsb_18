@@ -103,8 +103,8 @@ def test_update_ignores_code_change(api, make_space):
 
 def test_detail_and_profile_aggregate_related_data(api, make_task, make_record):
     task = make_task()
-    make_record(task=task, work_hours=8)
-    make_record(task=task, work_hours=4, quality_result="pending", record_date=date(2026, 3, 20))
+    make_record(task=task, work_hours=6.5)
+    make_record(task=task, work_hours=5.5, quality_result="pending", record_date=date(2026, 3, 20))
 
     data = api.data(api.get(f"/api/v1/green-spaces/{task.green_space_id}/profile"))
     assert data["green_space"]["name"] == task.green_space.name
