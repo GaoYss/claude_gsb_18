@@ -9,6 +9,7 @@ from ..errors import ConflictError, ValidationError
 from ..extensions import db
 from ..models import GreenSpace, MaintenanceRecord, MaintenanceTask, PlantReplacement
 from ..utils.dates import format_date
+from ..utils.deviation import evaluate_deviation
 from ..utils.numbers import to_float
 from ..utils.sorting import parse_sort
 from .base_service import BaseService
@@ -47,6 +48,8 @@ class MaintenanceRecordService(BaseService):
     def prepare_instance(cls, instance, payload):
         task_id = payload.get("task_id", instance.task_id)
         green_space_id = payload.get("green_space_id", instance.green_space_id)
+        type_provided = "task_type" in payload
+        task_type = payload.get("task_type") if type_provided else instance.task_type
 
         if task_id:
             task = db.session.get(MaintenanceTask, task_id)
@@ -58,7 +61,14 @@ class MaintenanceRecordService(BaseService):
                 raise ValidationError(
                     "录入失败", details={"green_space_id": "所属绿地与关联任务的绿地不一致"}
                 )
+            # 显式指定的任务类型与任务不一致才拒绝；未传时静默跟随任务（覆盖切换任务的场景）
+            if type_provided and task_type and task_type != task.task_type:
+                raise ValidationError(
+                    "录入失败",
+                    details={"task_type": "关联任务时任务类型以养护任务为准，请勿单独指定"},
+                )
             green_space_id = task.green_space_id
+            task_type = task.task_type
 
         if not green_space_id:
             raise ValidationError(
@@ -69,6 +79,10 @@ class MaintenanceRecordService(BaseService):
             raise ValidationError("录入失败", details={"green_space_id": "所选绿地不存在"})
 
         instance.green_space_id = green_space_id
+        instance.task_type = task_type
+        # 回写归一化后的任务类型：update 路径的 setattr 循环在 prepare 之后执行，
+        # 避免关联任务时被 payload 中的空值覆盖回 None
+        payload["task_type"] = task_type
         record_date = payload.get("record_date", instance.record_date)
         if record_date and space.established_date and record_date < space.established_date:
             raise ValidationError(
@@ -80,6 +94,24 @@ class MaintenanceRecordService(BaseService):
     def prepare_update(cls, instance, payload):
         setattr(instance, "_previous_task_id", instance.task_id)
         cls.prepare_instance(instance, payload)
+
+    @classmethod
+    def apply_derived(cls, instance):
+        """按作业标准重算偏差标志；偏差较大时强制要求填写原因。"""
+
+        result = evaluate_deviation(instance.task_type, instance.work_hours, instance.materials)
+        instance.deviation_flag = ",".join(result["flags"]) or None
+        if result["deviated"]:
+            if not (instance.deviation_reason or "").strip():
+                raise ValidationError(
+                    "提交的数据未通过校验",
+                    details={
+                        "deviation_reason": "实际工时或使用材料与作业标准偏差较大，请填写偏差原因"
+                    },
+                )
+        else:
+            # 偏差消除后残留原因自动清空；本就无偏差时填写的原因也不保留
+            instance.deviation_reason = None
 
     # ------------------------------------------------------------ 任务状态联动
     @classmethod
@@ -147,6 +179,10 @@ class MaintenanceRecordService(BaseService):
             query = query.filter(MaintenanceRecord.quality_result == filters["quality_result"])
         if filters.get("weather"):
             query = query.filter(MaintenanceRecord.weather == filters["weather"])
+        if filters.get("task_type"):
+            query = query.filter(MaintenanceRecord.task_type == filters["task_type"])
+        if filters.get("deviated"):
+            query = query.filter(MaintenanceRecord.deviation_flag.isnot(None))
         if filters.get("unlinked"):
             query = query.filter(MaintenanceRecord.task_id.is_(None))
         if filters.get("date_from"):

@@ -50,6 +50,14 @@
         tone="info"
         icon="Money"
       />
+      <StatCard
+        label="偏差养护记录"
+        :value="formatNumber(deviation.total)"
+        unit="条"
+        :hint="`工时偏差 ${deviation.work_hours_count} 条 · 材料偏差 ${deviation.materials_count} 条`"
+        :tone="deviation.total ? 'danger' : 'default'"
+        icon="Warning"
+      />
     </div>
 
     <div class="chart-grid">
@@ -57,6 +65,59 @@
       <ChartPanel title="绿地类型分布" hint="按绿地处数" :option="typeChart" />
       <ChartPanel title="养护任务类型分布" hint="按任务条数" :option="taskTypeChart" />
       <ChartPanel title="绿植更换原因分布" hint="按更换数量" :option="reasonChart" />
+    </div>
+
+    <div class="panel deviation-panel">
+      <div class="table-toolbar">
+        <span class="panel-title">工时/材料偏差记录汇总</span>
+        <el-link type="primary" :underline="false" @click="router.push('/records?deviated=true')">
+          查看全部偏差记录
+        </el-link>
+      </div>
+      <div class="deviation-summary">
+        <span class="summary-text">
+          共 <strong>{{ deviation.total }}</strong> 条偏差记录，
+          工时偏差 <strong class="danger-text">{{ deviation.work_hours_count }}</strong> 条，
+          材料偏差 <strong class="danger-text">{{ deviation.materials_count }}</strong> 条
+        </span>
+        <span v-if="deviation.by_task_type.length" class="type-tags">
+          <el-tag v-for="item in deviation.by_task_type" :key="item.value" size="small" type="danger"
+                  effect="plain" class="type-tag">{{ item.label }} {{ item.count }}</el-tag>
+        </span>
+      </div>
+      <el-table :data="deviation.records" size="small" empty-text="暂无偏差记录">
+        <el-table-column prop="record_no" label="记录编号" width="150" />
+        <el-table-column label="绿地" min-width="140" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.green_space?.name || '-' }}</template>
+        </el-table-column>
+        <el-table-column label="任务类型" width="105">
+          <template #default="{ row }">
+            <EnumTag v-if="row.task_type" group="task_type" :value="row.task_type" :label="row.task_type_label" />
+            <span v-else>-</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="record_date" label="养护日期" width="105" />
+        <el-table-column prop="worker" label="作业人员" width="90">
+          <template #default="{ row }">{{ row.worker || '-' }}</template>
+        </el-table-column>
+        <el-table-column label="实际/标准工时" width="130" align="right">
+          <template #default="{ row }">
+            <div :class="{ 'danger-text deviation-hours': row.work_hours_deviation }">
+              {{ formatNumber(row.work_hours) }}
+            </div>
+            <div class="cell-sub">
+              标准 {{ row.standard_hours }}（{{ row.hours_lower }}~{{ row.hours_upper }}）
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="偏差类型" width="150">
+          <template #default="{ row }">
+            <el-tag v-for="flag in row.deviation_flags" :key="flag" size="small" type="danger"
+                    effect="plain" class="deviation-tag">{{ deviationLabels[flag] || flag }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="deviation_reason" label="偏差原因" min-width="200" show-overflow-tooltip />
+      </el-table>
     </div>
 
     <div class="dashboard-columns">
@@ -163,12 +224,14 @@ import EnumTag from '@/components/common/EnumTag.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import StatCard from '@/components/common/StatCard.vue'
 import { formatArea, formatCurrency, formatHours, formatNumber, formatPercent, today } from '@/utils/format'
+import { DEVIATION_LABELS } from '@/utils/deviation'
 
 import { barOption, pieOption, trendOption } from './chartOptions'
 
 const router = useRouter()
 const loading = ref(false)
 const dashboard = ref(emptyDashboard())
+const deviationLabels = DEVIATION_LABELS
 
 function emptyDashboard() {
   return {
@@ -185,6 +248,7 @@ function emptyDashboard() {
       replacement_by_category: [],
     },
     trends: [],
+    deviation: { total: 0, work_hours_count: 0, materials_count: 0, by_task_type: [], records: [] },
     ranking: [],
     overdue_tasks: [],
     upcoming_tasks: [],
@@ -193,6 +257,7 @@ function emptyDashboard() {
 }
 
 const overview = computed(() => dashboard.value.overview)
+const deviation = computed(() => dashboard.value.deviation)
 
 const trendChart = computed(() => trendOption(dashboard.value.trends || []))
 
@@ -251,8 +316,49 @@ onMounted(load)
   gap: 16px;
 }
 
+.deviation-panel {
+  margin: 16px 0;
+}
+
+.deviation-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.type-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.type-tag {
+  margin: 0;
+}
+
 .panel-title {
   font-weight: 600;
+}
+
+.danger-text {
+  color: #f56c6c;
+  font-weight: 600;
+}
+
+.deviation-hours {
+  line-height: 1.4;
+}
+
+.deviation-tag {
+  margin: 0 4px 2px 0;
+}
+
+.cell-sub {
+  color: #909399;
+  font-size: 12px;
 }
 
 .overdue-days {

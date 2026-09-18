@@ -18,6 +18,7 @@ from .services import (
     MaintenanceTaskService,
     PlantReplacementService,
 )
+from .utils.deviation import evaluate_deviation
 
 SPACE_SEEDS = [
     {
@@ -164,11 +165,21 @@ WEATHERS = ["sunny", "cloudy", "overcast", "rain", "windy"]
 WORKERS = ["王海涛", "李建民", "张凤英", "吴国强", "何丽萍", "赵春生", "孙明华", "许娟"]
 SUPPLIERS = ["萧山苗木合作社", "临安绿源苗圃", "余杭花卉基地", "杭州城西园艺公司"]
 
+DEVIATION_REASONS = [
+    "台风后应急抢险，作业范围超出常规计划",
+    "连续高温干旱，临时增加浇灌频次与用水量",
+    "现场病虫害较预期严重，按植保要求加密施药",
+    "降雨后倒伏苗木较多，临时增加支撑与清运工作量",
+    "库存材料替代，成分与常用材料一致，已现场核实",
+    "重大活动保障，保洁与巡查力度按专项方案加强",
+]
+
 
 def register_cli(app):
     app.cli.add_command(init_db_command)
     app.cli.add_command(seed_command)
     app.cli.add_command(reset_db_command)
+    app.cli.add_command(upgrade_db_command)
 
 
 @click.command("init-db")
@@ -188,6 +199,46 @@ def reset_db_command():
     db.drop_all()
     db.create_all()
     click.echo("数据表已重建")
+
+
+# 存量库（create_all 不会给已有表补列）的轻量升级：仅补历史新增的可空列
+_EXTRA_COLUMNS = {
+    "maintenance_record": {
+        "task_type": "VARCHAR(32)",
+        "deviation_flag": "VARCHAR(32)",
+        "deviation_reason": "TEXT",
+    },
+}
+_EXTRA_INDEXES = {
+    "maintenance_record": ["task_type", "deviation_flag"],
+}
+
+
+@click.command("upgrade-db")
+@with_appcontext
+def upgrade_db_command():
+    """给已有数据表补齐新增列与索引（幂等，不删除数据）。"""
+
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(db.engine)
+    existing_tables = set(inspector.get_table_names())
+    for table, columns in _EXTRA_COLUMNS.items():
+        if table not in existing_tables:
+            continue
+        present = {column["name"] for column in inspector.get_columns(table)}
+        for name, column_type in columns.items():
+            if name in present:
+                continue
+            db.session.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {column_type}"))
+            click.echo(f"已补列：{table}.{name}")
+        for name in _EXTRA_INDEXES.get(table, []):
+            index = f"ix_{table}_{name}"
+            db.session.execute(
+                text(f"CREATE INDEX IF NOT EXISTS {index} ON {table} ({name})")
+            )
+    db.session.commit()
+    click.echo("数据库结构已升级")
 
 
 @click.command("seed")
@@ -256,17 +307,23 @@ def generate_demo_data(rng):
 
             record_date = plan_date + timedelta(days=rng.randint(0, 3))
             quality = "qualified" if rng.random() < 0.82 else rng.choice(["pending", "unqualified"])
-            record = MaintenanceRecordService.create({
+            work_hours = rng.choice([3, 4, 5, 6, 8, 10])
+            materials = rng.choice(["复合肥 180kg", "低毒药剂 12L", "支撑杆 60 根", "无", "防寒布 400㎡"])
+            record_payload = {
                 "task_id": task.id,
                 "record_date": record_date,
                 "work_content": rng.choice(RECORD_CONTENTS[task_type]),
                 "worker": rng.choice(WORKERS),
-                "work_hours": rng.choice([3, 4, 5, 6, 8, 10]),
+                "work_hours": work_hours,
                 "weather": rng.choice(WEATHERS),
-                "materials": rng.choice(["复合肥 180kg", "低毒药剂 12L", "支撑杆 60 根", "无", "防寒布 400㎡"]),
+                "materials": materials,
                 "quality_result": quality,
                 "issue_found": "局部色块缺株，已列入下月补植计划" if quality == "unqualified" else None,
-            })
+            }
+            # 工时/材料与标准偏差较大时，按业务要求补上偏差原因（偏差标志由 service 重算）
+            if evaluate_deviation(task_type, work_hours, materials)["deviated"]:
+                record_payload["deviation_reason"] = rng.choice(DEVIATION_REASONS)
+            record = MaintenanceRecordService.create(record_payload)
             counts["maintenance_record"] += 1
 
             replace_chance = 0.85 if task_type in {"replant", "pest", "prune"} else 0.35
@@ -291,9 +348,11 @@ def generate_demo_data(rng):
                     })
                     counts["plant_replacement"] += 1
 
-        # 日常巡查类记录（不挂任务），保留独立录入场景
+        # 日常巡查类记录（不挂任务），保留独立录入场景；部分手动指定任务类型
         for _ in range(rng.randint(1, 3)):
-            MaintenanceRecordService.create({
+            daily_type = rng.choice(["clean", "weed", "other", None, None])
+            daily_hours = rng.choice([1, 2, 3])
+            daily_payload = {
                 "green_space_id": space.id,
                 "record_date": today_ - timedelta(days=rng.randint(1, 40)),
                 "work_content": rng.choice([
@@ -302,11 +361,45 @@ def generate_demo_data(rng):
                     "巡查记录：色块长势正常，无明显病虫害",
                 ]),
                 "worker": rng.choice(WORKERS),
-                "work_hours": rng.choice([1, 2, 3]),
+                "work_hours": daily_hours,
                 "weather": rng.choice(WEATHERS),
                 "quality_result": "qualified",
-            })
+            }
+            if daily_type:
+                daily_payload["task_type"] = daily_type
+            if daily_type and evaluate_deviation(daily_type, daily_hours, None)["deviated"]:
+                daily_payload["deviation_reason"] = rng.choice(DEVIATION_REASONS)
+            MaintenanceRecordService.create(daily_payload)
             counts["maintenance_record"] += 1
+
+    # 确定性保底：让看板始终至少有一条工时偏差与一条材料偏差记录，不依赖随机结果
+    first_space = db.session.query(GreenSpace).order_by(GreenSpace.id.asc()).first()
+    if first_space is not None:
+        MaintenanceRecordService.create({
+            "green_space_id": first_space.id,
+            "task_type": "prune",
+            "record_date": today_ - timedelta(days=2),
+            "work_content": "应急修剪：台风后集中清理断枝与倒伏乔木，作业范围远超日常计划",
+            "worker": "王海涛",
+            "work_hours": 12,
+            "weather": "cloudy",
+            "materials": "修枝剪、油锯、支撑杆",
+            "quality_result": "qualified",
+            "deviation_reason": "台风后应急抢险，作业范围超出常规计划",
+        })
+        MaintenanceRecordService.create({
+            "green_space_id": first_space.id,
+            "task_type": "clean",
+            "record_date": today_ - timedelta(days=1),
+            "work_content": "景观节点保洁，使用库存垃圾袋完成清理",
+            "worker": "何丽萍",
+            "work_hours": 3,
+            "weather": "sunny",
+            "materials": "无",
+            "quality_result": "qualified",
+            "deviation_reason": "库存材料替代，成分与常用材料一致，已现场核实",
+        })
+        counts["maintenance_record"] += 2
 
     # 一条已取消任务，覆盖全部状态场景
     first_space = db.session.query(GreenSpace).order_by(GreenSpace.id.asc()).first()

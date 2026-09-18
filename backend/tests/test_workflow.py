@@ -34,6 +34,7 @@ def test_green_space_lifecycle_from_ledger_to_replacement(api):
         "work_hours": 8,
         "weather": "sunny",
         "quality_result": "qualified",
+        "deviation_reason": "樱花季前专项修剪，作业量超出常规标准",
     }), 201)
     assert record["green_space_id"] == space_id
 

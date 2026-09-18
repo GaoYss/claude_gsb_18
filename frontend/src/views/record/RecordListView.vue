@@ -19,9 +19,13 @@
         <el-select v-model="filters.weather" placeholder="天气" clearable @change="search">
           <el-option v-for="item in weatherOptions" :key="item.value" :label="item.label" :value="item.value" />
         </el-select>
+        <el-select v-model="filters.task_type" placeholder="任务类型" clearable @change="search">
+          <el-option v-for="item in taskTypeOptions" :key="item.value" :label="item.label" :value="item.value" />
+        </el-select>
         <el-date-picker v-model="dateRange" type="daterange" unlink-panels value-format="YYYY-MM-DD"
                         start-placeholder="养护日期起" end-placeholder="养护日期止" @change="onDateChange" />
         <el-checkbox v-model="filters.unlinked" label="仅看未关联任务" border @change="search" />
+        <el-checkbox v-model="filters.deviated" label="仅看偏差记录" border @change="search" />
         <el-button type="primary" :icon="'Search'" @click="search">查询</el-button>
         <el-button :icon="'RefreshLeft'" @click="reset">重置</el-button>
       </div>
@@ -50,6 +54,12 @@
             <el-tag v-else size="small" type="info" effect="plain">日常养护</el-tag>
           </template>
         </el-table-column>
+        <el-table-column label="任务类型" width="105">
+          <template #default="{ row }">
+            <EnumTag v-if="row.task_type" group="task_type" :value="row.task_type" :label="row.task_type_label" />
+            <span v-else>-</span>
+          </template>
+        </el-table-column>
         <el-table-column label="养护日期" width="105">
           <template #default="{ row }">
             <div>{{ row.record_date }}</div>
@@ -60,12 +70,29 @@
         <el-table-column prop="worker" label="作业人员" width="90">
           <template #default="{ row }">{{ row.worker || '-' }}</template>
         </el-table-column>
-        <el-table-column label="工时" width="80" align="right">
-          <template #default="{ row }">{{ formatNumber(row.work_hours) }}</template>
+        <el-table-column label="工时" width="90" align="right">
+          <template #default="{ row }">
+            <el-tooltip v-if="row.work_hours_deviation" placement="top"
+                        :content="`标准 ${row.standard_hours}h，合理区间 ${row.hours_lower}~${row.hours_upper}h`">
+              <span class="deviation-hours">{{ formatNumber(row.work_hours) }}</span>
+            </el-tooltip>
+            <span v-else>{{ formatNumber(row.work_hours) }}</span>
+          </template>
         </el-table-column>
         <el-table-column label="质量评定" width="95">
           <template #default="{ row }">
             <EnumTag group="quality_result" :value="row.quality_result" :label="row.quality_result_label" />
+          </template>
+        </el-table-column>
+        <el-table-column label="偏差" width="130">
+          <template #default="{ row }">
+            <template v-if="row.deviation_flags?.length">
+              <el-tag v-for="flag in row.deviation_flags" :key="flag" size="small" type="danger"
+                      effect="plain" class="deviation-tag" @click="detailDialog.open(row.id)">
+                {{ deviationLabels[flag] || flag }}
+              </el-tag>
+            </template>
+            <span v-else>-</span>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="150" fixed="right">
@@ -107,6 +134,7 @@ import PageHeader from '@/components/common/PageHeader.vue'
 import { useEnumOptions } from '@/composables/useEnumOptions'
 import { useListQuery } from '@/composables/useListQuery'
 import { formatHours, formatNumber } from '@/utils/format'
+import { DEVIATION_LABELS } from '@/utils/deviation'
 
 import RecordDetailDialog from './RecordDetailDialog.vue'
 import RecordFormDialog from './RecordFormDialog.vue'
@@ -118,6 +146,8 @@ const dateRange = ref([])
 
 const { options: qualityOptions } = useEnumOptions('quality_result')
 const { options: weatherOptions } = useEnumOptions('weather')
+const { options: taskTypeOptions } = useEnumOptions('task_type')
+const deviationLabels = DEVIATION_LABELS
 
 const { filters, meta, items, summary, loading, load, search, resetFilters, handlePageChange, handleSizeChange } =
   useListQuery(maintenanceRecordApi.list, {
@@ -125,11 +155,13 @@ const { filters, meta, items, summary, loading, load, search, resetFilters, hand
       keyword: '',
       green_space_id: route.query.green_space_id ? Number(route.query.green_space_id) : null,
       task_id: route.query.task_id ? Number(route.query.task_id) : null,
+      task_type: route.query.task_type || '',
       quality_result: '',
       weather: '',
       date_from: '',
       date_to: '',
       unlinked: false,
+      deviated: route.query.deviated === 'true',
     },
   })
 
@@ -176,5 +208,16 @@ async function remove(row) {
 .cell-sub {
   color: #909399;
   font-size: 12px;
+}
+
+.deviation-hours {
+  color: #f56c6c;
+  font-weight: 700;
+  cursor: help;
+}
+
+.deviation-tag {
+  margin: 2px 4px 2px 0;
+  cursor: pointer;
 }
 </style>

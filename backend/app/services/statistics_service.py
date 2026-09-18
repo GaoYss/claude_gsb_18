@@ -2,13 +2,14 @@
 
 from datetime import timedelta
 
-from sqlalchemy import func
+from sqlalchemy import case, func
 
 from ..constants import ENUM_GROUPS
 from ..extensions import db
 from ..models import GreenSpace, MaintenanceRecord, MaintenanceTask, PlantReplacement
 from ..models.maintenance_task import OPEN_STATUSES
 from ..utils.dates import today
+from ..utils.deviation import FLAG_MATERIALS, FLAG_WORK_HOURS
 from ..utils.numbers import to_float
 
 
@@ -385,6 +386,91 @@ class StatisticsService:
             "replacements": [item.to_dict() for item in replacements],
         }
 
+    # ------------------------------------------------------------ 偏差汇总
+    @staticmethod
+    def deviation_summary(limit=10):
+        """工时/材料偏差较大记录的计数、按任务类型分组与近 N 条明细。"""
+
+        deviated = MaintenanceRecord.deviation_flag.isnot(None)
+
+        total, work_hours_count, materials_count = (
+            db.session.query(
+                func.count(MaintenanceRecord.id),
+                func.coalesce(
+                    func.sum(
+                        case(
+                            (MaintenanceRecord.deviation_flag.like(f"%{FLAG_WORK_HOURS}%"), 1),
+                            else_=0,
+                        )
+                    ),
+                    0,
+                ),
+                func.coalesce(
+                    func.sum(
+                        case(
+                            (MaintenanceRecord.deviation_flag.like(f"%{FLAG_MATERIALS}%"), 1),
+                            else_=0,
+                        )
+                    ),
+                    0,
+                ),
+            )
+            .filter(deviated)
+            .one()
+        )
+
+        type_rows = (
+            db.session.query(MaintenanceRecord.task_type, func.count(MaintenanceRecord.id))
+            .filter(deviated)
+            .group_by(MaintenanceRecord.task_type)
+            .order_by(func.count(MaintenanceRecord.id).desc())
+            .all()
+        )
+        by_task_type = [
+            {
+                "value": task_type,
+                "label": ENUM_GROUPS["task_type"].label(task_type),
+                "count": count,
+            }
+            for task_type, count in type_rows
+            if task_type
+        ]
+
+        records = (
+            db.session.query(MaintenanceRecord)
+            .filter(deviated)
+            .order_by(MaintenanceRecord.record_date.desc(), MaintenanceRecord.id.desc())
+            .limit(limit)
+            .all()
+        )
+        record_items = []
+        for item in records:
+            detail = item.to_dict()
+            record_items.append({
+                "id": detail["id"],
+                "record_no": detail["record_no"],
+                "green_space": detail["green_space"],
+                "record_date": detail["record_date"],
+                "task_type": detail["task_type"],
+                "task_type_label": detail["task_type_label"],
+                "worker": detail["worker"],
+                "work_hours": detail["work_hours"],
+                "standard_hours": detail["standard_hours"],
+                "hours_lower": detail["hours_lower"],
+                "hours_upper": detail["hours_upper"],
+                "deviation_flags": detail["deviation_flags"],
+                "deviation_reason": item.deviation_reason,
+            })
+
+        return {
+            "total": total or 0,
+            # 按偏差类型分别计次，一条记录同时工时与材料偏差时两边各计一次
+            "work_hours_count": int(work_hours_count or 0),
+            "materials_count": int(materials_count or 0),
+            "by_task_type": by_task_type,
+            "records": record_items,
+        }
+
     # ------------------------------------------------------------ 汇总入口
     @staticmethod
     def dashboard(months=6):
@@ -394,6 +480,7 @@ class StatisticsService:
             "overview": StatisticsService.overview(),
             "distributions": StatisticsService.distributions(),
             "trends": StatisticsService.trends(months),
+            "deviation": StatisticsService.deviation_summary(),
             "ranking": StatisticsService.green_space_ranking(),
             "overdue_tasks": StatisticsService.overdue_tasks(),
             "upcoming_tasks": StatisticsService.upcoming_tasks(),

@@ -28,6 +28,20 @@ def test_enums_cover_all_business_groups(api):
     assert {"value": "park", "label": "公园绿地"} in enums["green_space_type"]
 
 
+def test_task_standards_are_delivered_with_enums(api):
+    data = api.data(api.get("/api/v1/meta/enums"))
+    standards = data["task_standards"]
+    assert {"prune", "water", "fertilize", "pest", "weed", "clean", "replant", "winter", "other"} <= set(standards)
+    prune = standards["prune"]
+    assert prune["standard_hours"] == 6.0
+    assert prune["hours_tolerance_ratio"] == 0.30
+    assert prune["hours_abs_tolerance"] == 0.5
+    assert prune["materials_default"]
+    assert isinstance(prune["materials_keywords"], list) and prune["materials_keywords"]
+    # other 明确不设标准
+    assert standards["other"] is None
+
+
 def test_unknown_api_returns_unified_404(api):
     response = api.get("/api/v1/not-exists")
     assert response.status_code == 404

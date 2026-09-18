@@ -6,11 +6,13 @@ import { metaApi } from '@/api'
 export const useMetaStore = defineStore('meta', {
   state: () => ({
     enums: {},
+    taskStandards: {},
     loaded: false,
     pending: null,
   }),
   getters: {
     options: (state) => (group) => state.enums[group] || [],
+    standard: (state) => (taskType) => state.taskStandards[taskType] || null,
   },
   actions: {
     async ensureLoaded() {
@@ -20,6 +22,7 @@ export const useMetaStore = defineStore('meta', {
           .getEnums()
           .then((data) => {
             this.enums = data?.enums || {}
+            this.taskStandards = data?.task_standards || {}
             this.loaded = true
             return this.enums
           })

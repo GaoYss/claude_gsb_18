@@ -82,7 +82,9 @@ def record_filters(args):
         if value:
             filters[key] = value
     filters["unlinked"] = _flag(args, "unlinked")
-    for key, group_key in (("quality_result", "quality_result"), ("weather", "weather")):
+    filters["deviated"] = _flag(args, "deviated")
+    for key, group_key in (("quality_result", "quality_result"), ("weather", "weather"),
+                           ("task_type", "task_type")):
         value = _enum(args, key, group_key)
         if value:
             filters[key] = value

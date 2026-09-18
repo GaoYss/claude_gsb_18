@@ -130,6 +130,56 @@ MEASURE_UNIT = EnumGroup("measure_unit", [
     ("clump", "丛"),
 ])
 
+# ---------------------------------------------------------------- 养护作业标准
+# 按任务类型内置的作业标准：录入养护记录时自动带出，用于工时/材料偏差提醒。
+# - standard_hours：标准工时（小时）；
+# - materials_default：选中任务类型后自动带入材料输入框的默认文本；
+# - materials_keywords：常用材料关键词，按子串匹配，实际材料命中任一则不算偏差。
+# 标准为 None（other 或未知类型）表示不设标准：工时与材料均不校验、不产生偏差。
+TASK_STANDARDS = {
+    "prune": {
+        "standard_hours": 6.0,
+        "materials_default": "修枝剪、手锯、伤口涂抹剂",
+        "materials_keywords": ["修枝剪", "手锯", "高枝剪", "绿篱机", "油锯", "修剪", "伤口涂抹剂", "支撑杆"],
+    },
+    "water": {
+        "standard_hours": 4.0,
+        "materials_default": "水管/洒水车、浇灌用水",
+        "materials_keywords": ["水", "水管", "水泵", "洒水车"],
+    },
+    "fertilize": {
+        "standard_hours": 5.0,
+        "materials_default": "复合肥",
+        "materials_keywords": ["肥", "复合肥", "缓释肥", "有机肥", "尿素"],
+    },
+    "pest": {
+        "standard_hours": 4.0,
+        "materials_default": "低毒药剂、黄板",
+        "materials_keywords": ["药剂", "农药", "杀虫", "杀菌", "黄板", "诱虫板", "消毒液"],
+    },
+    "weed": {
+        "standard_hours": 4.0,
+        "materials_default": "锄头、割草机",
+        "materials_keywords": ["除草剂", "草甘膦", "锄头", "割草机", "打草机"],
+    },
+    "clean": {
+        "standard_hours": 3.0,
+        "materials_default": "扫帚、垃圾袋",
+        "materials_keywords": ["扫帚", "垃圾袋", "垃圾桶", "保洁"],
+    },
+    "replant": {
+        "standard_hours": 6.0,
+        "materials_default": "补植苗木、支撑杆",
+        "materials_keywords": ["苗木", "树苗", "补植", "支撑杆", "生根粉", "定根水", "草绳"],
+    },
+    "winter": {
+        "standard_hours": 5.0,
+        "materials_default": "防寒布、草绳",
+        "materials_keywords": ["防寒布", "草绳", "保温棉", "涂白剂", "防冻", "挡风障"],
+    },
+    "other": None,
+}
+
 # 前端下拉与文档共用的一份字典清单
 ENUM_GROUPS = {
     "green_space_type": GREEN_SPACE_TYPE,

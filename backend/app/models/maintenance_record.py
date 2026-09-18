@@ -1,8 +1,14 @@
 """养护记录模型。"""
 
-from ..constants import QUALITY_RESULT, WEATHER
+from ..constants import QUALITY_RESULT, TASK_TYPE, WEATHER
 from ..extensions import db
 from ..utils.dates import format_date, format_datetime
+from ..utils.deviation import (
+    FLAG_MATERIALS,
+    FLAG_WORK_HOURS,
+    get_standard,
+    hours_range,
+)
 from ..utils.numbers import to_float
 from .mixins import TimestampMixin, quantity_column
 
@@ -24,11 +30,15 @@ class MaintenanceRecord(TimestampMixin, db.Model):
         db.Integer, db.ForeignKey("green_space.id", ondelete="CASCADE"), nullable=False, index=True
     )
     record_date = db.Column(db.Date, nullable=False, index=True)
+    task_type = db.Column(db.String(32), nullable=True, index=True)
     work_content = db.Column(db.Text, nullable=False)
     worker = db.Column(db.String(64))
     work_hours = db.Column(quantity_column())
     weather = db.Column(db.String(16))
     materials = db.Column(db.Text)
+    # 偏差标志（"work_hours" / "materials" / "work_hours,materials"），由服务端按标准重算
+    deviation_flag = db.Column(db.String(32), nullable=True, index=True)
+    deviation_reason = db.Column(db.Text)
     quality_result = db.Column(db.String(16), nullable=False, default="pending", index=True)
     issue_found = db.Column(db.Text)
     remark = db.Column(db.Text)
@@ -38,6 +48,11 @@ class MaintenanceRecord(TimestampMixin, db.Model):
     replacements = db.relationship("PlantReplacement", back_populates="record")
 
     def to_dict(self, detail=False):
+        flags = self.deviation_flag.split(",") if self.deviation_flag else []
+        standard = get_standard(self.task_type)
+        standard_hours = standard.get("standard_hours") if standard else None
+        hours_lower, hours_upper = hours_range(standard_hours) if standard_hours else (None, None)
+
         data = {
             "id": self.id,
             "record_no": self.record_no,
@@ -55,11 +70,20 @@ class MaintenanceRecord(TimestampMixin, db.Model):
             "green_space_id": self.green_space_id,
             "green_space": self.green_space.to_brief() if self.green_space else None,
             "record_date": format_date(self.record_date),
+            "task_type": self.task_type,
+            "task_type_label": TASK_TYPE.label(self.task_type) if self.task_type else None,
             "work_content": self.work_content,
             "worker": self.worker,
             "work_hours": to_float(self.work_hours),
+            "standard_hours": standard_hours,
+            "hours_lower": hours_lower,
+            "hours_upper": hours_upper,
             "weather": self.weather,
             "weather_label": WEATHER.label(self.weather) if self.weather else None,
+            "is_deviated": self.deviation_flag is not None,
+            "deviation_flags": flags,
+            "work_hours_deviation": FLAG_WORK_HOURS in flags,
+            "materials_deviation": FLAG_MATERIALS in flags,
             "quality_result": self.quality_result,
             "quality_result_label": QUALITY_RESULT.label(self.quality_result),
             "created_at": format_datetime(self.created_at),
@@ -67,6 +91,7 @@ class MaintenanceRecord(TimestampMixin, db.Model):
         }
         if detail:
             data["materials"] = self.materials
+            data["deviation_reason"] = self.deviation_reason
             data["issue_found"] = self.issue_found
             data["remark"] = self.remark
             data["replacements"] = [item.to_dict() for item in self.replacements]

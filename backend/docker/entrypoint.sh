@@ -30,6 +30,8 @@ fi
 
 echo "初始化数据表..."
 python -m flask --app wsgi init-db
+# 兼容旧版本数据库：create_all 不会给已有表补列，upgrade-db 幂等执行
+python -m flask --app wsgi upgrade-db
 
 if [ "${SEED_DEMO_DATA:-false}" = "true" ]; then
   echo "写入演示数据..."

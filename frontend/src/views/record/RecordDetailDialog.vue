@@ -16,13 +16,36 @@
         <el-descriptions-item label="养护日期">{{ formatDate(detail.record_date) }}</el-descriptions-item>
         <el-descriptions-item label="天气">{{ detail.weather_label || '-' }}</el-descriptions-item>
         <el-descriptions-item label="作业人员">{{ detail.worker || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="工时">{{ formatHours(detail.work_hours) }}</el-descriptions-item>
+        <el-descriptions-item label="工时">
+          <span :class="{ 'deviation-text': detail.work_hours_deviation }">{{ formatHours(detail.work_hours) }}</span>
+        </el-descriptions-item>
+        <el-descriptions-item label="任务类型">
+          <EnumTag v-if="detail.task_type" group="task_type" :value="detail.task_type"
+                   :label="detail.task_type_label" />
+          <span v-else>-</span>
+        </el-descriptions-item>
+        <el-descriptions-item label="标准工时">
+          <template v-if="detail.standard_hours">
+            {{ detail.standard_hours }} h
+            <span class="cell-sub">（合理区间 {{ detail.hours_lower }}~{{ detail.hours_upper }} h）</span>
+          </template>
+          <span v-else>-</span>
+        </el-descriptions-item>
         <el-descriptions-item label="质量评定">
           <EnumTag group="quality_result" :value="detail.quality_result" :label="detail.quality_result_label" />
         </el-descriptions-item>
         <el-descriptions-item label="登记时间">{{ formatDateTime(detail.created_at) }}</el-descriptions-item>
+        <el-descriptions-item v-if="detail.is_deviated" label="偏差类型" :span="2">
+          <el-tag v-for="flag in detail.deviation_flags" :key="flag" type="danger" effect="plain"
+                  size="small" class="deviation-tag">{{ deviationLabels[flag] || flag }}</el-tag>
+        </el-descriptions-item>
         <el-descriptions-item label="作业内容" :span="2">{{ detail.work_content || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="使用材料" :span="2">{{ detail.materials || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="使用材料" :span="2">
+          <span :class="{ 'deviation-text': detail.materials_deviation }">{{ detail.materials || '-' }}</span>
+        </el-descriptions-item>
+        <el-descriptions-item v-if="detail.deviation_reason" label="偏差原因" :span="2">
+          <span class="deviation-reason">{{ detail.deviation_reason }}</span>
+        </el-descriptions-item>
         <el-descriptions-item label="发现问题" :span="2">{{ detail.issue_found || '-' }}</el-descriptions-item>
         <el-descriptions-item label="备注" :span="2">{{ detail.remark || '-' }}</el-descriptions-item>
       </el-descriptions>
@@ -59,10 +82,12 @@ import { ref } from 'vue'
 import { maintenanceRecordApi } from '@/api'
 import EnumTag from '@/components/common/EnumTag.vue'
 import { formatCurrency, formatDate, formatDateTime, formatHours, formatNumber } from '@/utils/format'
+import { DEVIATION_LABELS } from '@/utils/deviation'
 
 const visible = ref(false)
 const loading = ref(false)
 const detail = ref({})
+const deviationLabels = DEVIATION_LABELS
 
 async function open(id) {
   visible.value = true
@@ -90,6 +115,25 @@ defineExpose({ open })
 }
 
 .panel-title {
+  font-weight: 600;
+}
+
+.cell-sub {
+  color: #909399;
+  font-size: 12px;
+}
+
+.deviation-text {
+  color: #f56c6c;
+  font-weight: 600;
+}
+
+.deviation-tag {
+  margin-right: 6px;
+}
+
+.deviation-reason {
+  color: #e6a23c;
   font-weight: 600;
 }
 </style>

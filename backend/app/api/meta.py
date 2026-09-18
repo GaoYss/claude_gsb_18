@@ -4,6 +4,7 @@ from flask import Blueprint
 
 from ..constants import all_enums
 from ..extensions import db
+from ..utils.deviation import task_standards_payload
 from ..utils.responses import ok
 from sqlalchemy import text
 
@@ -12,9 +13,9 @@ bp = Blueprint("meta", __name__)
 
 @bp.get("/meta/enums")
 def enums():
-    """下发全部业务字典，前端下拉统一从这里初始化。"""
+    """下发全部业务字典与按任务类型维护的作业标准，前端下拉统一从这里初始化。"""
 
-    return ok({"enums": all_enums()})
+    return ok({"enums": all_enums(), "task_standards": task_standards_payload()})
 
 
 @bp.get("/meta/health")

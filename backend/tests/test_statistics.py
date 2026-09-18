@@ -78,9 +78,58 @@ def test_ranking_orders_by_record_count(api, make_space, make_record):
 def test_dashboard_returns_all_sections(api, seeded):
     data = api.data(api.get("/api/v1/statistics/dashboard"))
     assert set(data) == {
-        "overview", "distributions", "trends", "ranking",
+        "overview", "distributions", "trends", "deviation", "ranking",
         "overdue_tasks", "upcoming_tasks", "recent_activity",
     }
     assert len(data["trends"]) == 6
     assert data["recent_activity"]["records"]
     assert data["recent_activity"]["replacements"]
+
+
+def test_deviation_summary_counts_groups_and_records(api, make_space, make_record):
+    space = make_space()
+    # prune 标准 6h：一条工时偏差，一条材料偏差
+    make_record(space=space, task_type="prune", work_hours=12,
+                materials="修枝剪、手锯", deviation_reason="应急抢险，工时超标",
+                record_date=date(2026, 4, 2))
+    make_record(space=space, task_type="prune", work_hours=6,
+                materials="复合肥 180kg", deviation_reason="材料替代",
+                record_date=date(2026, 4, 5))
+    # 一条合规记录不应计入
+    make_record(space=space, task_type="prune", work_hours=6,
+                materials="修枝剪", record_date=date(2026, 4, 6))
+
+    dashboard = api.data(api.get("/api/v1/statistics/dashboard"))
+    deviation = dashboard["deviation"]
+    assert deviation["total"] == 2
+    assert deviation["work_hours_count"] == 1
+    assert deviation["materials_count"] == 1
+
+    prune_group = next(item for item in deviation["by_task_type"] if item["value"] == "prune")
+    assert prune_group["count"] == 2
+    assert prune_group["label"] == "修剪整形"
+
+    records = deviation["records"]
+    assert len(records) == 2
+    # 按养护日期倒序
+    assert records[0]["record_date"] == "2026-04-05"
+    first = records[0]
+    assert first["green_space"]["id"] == space.id
+    assert first["standard_hours"] == 6.0
+    assert first["hours_lower"] == 4.2
+    assert first["hours_upper"] == 7.8
+    assert first["deviation_flags"] == ["materials"]
+    assert first["deviation_reason"] == "材料替代"
+    assert records[1]["deviation_flags"] == ["work_hours"]
+
+
+def test_seeded_dashboard_contains_stable_deviation_records(api, seeded):
+    # seed 中固定保底了一条工时偏差与一条材料偏差记录
+    deviation = api.data(api.get("/api/v1/statistics/dashboard"))["deviation"]
+    assert deviation["total"] >= 2
+    assert deviation["work_hours_count"] >= 1
+    assert deviation["materials_count"] >= 1
+    assert deviation["records"]
+    for item in deviation["records"]:
+        assert item["deviation_reason"]
+        assert item["deviation_flags"]
